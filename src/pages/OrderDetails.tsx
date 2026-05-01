@@ -57,14 +57,22 @@ export default function OrderDetails() {
         </section>
 
         <section className="rounded-xl border border-border bg-card p-4">
-          <h3 className="mb-3 text-sm font-semibold">Order Details</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold">Order Details</h3>
+            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+              Files Secured
+            </span>
+          </div>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">Order ID</div>
           <div className="font-mono text-xs mb-3">{order.id}</div>
           
           <div className="space-y-2">
             {order.files.map((file, idx) => (
               <div key={idx} className="flex justify-between items-center text-sm">
-                <span className="truncate pr-4 font-medium text-foreground/80">{file.name}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="truncate font-medium text-foreground/80">{file.name}</span>
+                  <span className="text-[10px] text-emerald-600 font-bold">✓</span>
+                </div>
                 <span className="text-xs text-muted-foreground shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
               </div>
             ))}

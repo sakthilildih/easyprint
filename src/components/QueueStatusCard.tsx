@@ -38,7 +38,7 @@ export function QueueStatusCard({ order }: { order: Order }) {
             <div className="rounded-xl bg-background border border-border p-3 text-center shadow-sm">
               <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Est. Wait</div>
               <div className="mt-1 text-2xl font-black text-primary">
-                {pos.ahead === 0 ? "< 1m" : `~${pos.ahead * 2}m`}
+                {pos.ahead === 0 ? "< 1m" : `~${Math.ceil(pos.ahead / 2)}m`}
               </div>
             </div>
             <div className="rounded-xl bg-background border border-border p-3 text-center shadow-sm">

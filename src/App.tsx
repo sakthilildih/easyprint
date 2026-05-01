@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import MyOrders from "./pages/MyOrders";
 import OrderDetails from "./pages/OrderDetails";
 import OrderSuccess from "./pages/OrderSuccess";
+import Admin from "./pages/Admin";
 
 // Keep auth + 404 lazy — they're rarely revisited.
 const Login = lazy(() => import("./pages/Login"));
@@ -27,6 +28,7 @@ const App = () => (
         <Route path="/orders" element={<RequireAuth><MyOrders /></RequireAuth>} />
         <Route path="/orders/:id" element={<RequireAuth><OrderDetails /></RequireAuth>} />
         <Route path="/success/:id" element={<RequireAuth><OrderSuccess /></RequireAuth>} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>

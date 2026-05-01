@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { MultiFileUpload } from "@/components/MultiFileUpload";
 import { createOrder, useUser } from "@/store/orders";
 import type { OrderFile } from "@/lib/types";
+
+import * as pdfjsLib from "pdfjs-dist";
+// Use a CDN for the worker to avoid complex Vite configuration
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 
@@ -36,38 +40,52 @@ export default function Dashboard() {
     setError(null);
   };
 
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+
   const submit = async () => {
     if (!user || files.length === 0 || submitting) return;
     setSubmitting(true);
     setError(null);
-    try {
-      // 1. Create order in Firestore INSTANTLY (no file upload yet)
-      const orderFiles: OrderFile[] = files.map((f) => ({
-        name: f.name,
-        size: f.size,
-      }));
+    setUploadProgress(0);
 
+    try {
+      const { uploadToS3 } = await import("@/lib/aws");
+
+      // 1. Upload ALL files to S3 first and get their URLs
+      const finalFiles: OrderFile[] = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        
+        const url = await uploadToS3(file, user, (percent) => {
+          const overallProgress = ((i / files.length) * 100) + (percent / files.length);
+          setUploadProgress(Math.round(overallProgress));
+        });
+        
+        finalFiles.push({
+          name: file.name,
+          size: file.size,
+          url: url
+        });
+      }
+
+      // 2. Create the Firestore document in ONE SHOT with all URLs
       const order = await createOrder({
+        userId: user.email,
         userEmail: user.email,
         userName: user.name,
-        files: orderFiles,
+        projectUrl: window.location.origin,
+        files: finalFiles,
       });
 
-      // 2. Navigate to waiting screen immediately
+      console.log("✅ Order placed successfully with all file URLs.");
       navigate(`/orders/${order.id}`);
 
-      // 3. Upload files to Storage in the background (non-blocking)
-      const { ref, uploadBytes } = await import("firebase/storage");
-      const { storage } = await import("@/lib/firebase");
-      files.forEach((file) => {
-        const fileRef = ref(storage, `orders/${order.id}/${file.name}`);
-        uploadBytes(fileRef, file).catch(console.warn);
-      });
-
-    } catch (e) {
-      console.error(e);
-      setError("Failed to place order. Please check your connection and try again.");
+    } catch (e: any) {
+      console.error("Order placement failed:", e);
+      setError(e.message || "Failed to place order. Please check your connection.");
       setSubmitting(false);
+      setUploadProgress(0);
     }
   };
 
@@ -96,14 +114,16 @@ export default function Dashboard() {
             <h2 className="text-sm font-semibold text-muted-foreground">Selected Files ({files.length})</h2>
             <div className="space-y-2">
               {files.map((file, idx) => (
-                <div key={idx} className="flex items-center justify-between rounded-xl border border-border bg-card p-3 shadow-sm">
+                <div key={idx} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-sm">
+                  <FilePreview file={file} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{file.name}</div>
                     <div className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} KB</div>
                   </div>
                   <button
                     onClick={() => removeFile(idx)}
-                    className="ml-3 p-1 text-muted-foreground transition hover:text-destructive"
+                    className="ml-2 p-2 text-muted-foreground transition hover:text-destructive shrink-0"
+                    aria-label="Remove file"
                   >
                     ✕
                   </button>
@@ -124,12 +144,15 @@ export default function Dashboard() {
             className="w-full rounded-xl bg-primary px-5 py-3.5 text-base font-bold text-primary-foreground shadow-md transition active:scale-[.98] disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
           >
             {submitting ? (
-              <span className="flex items-center justify-center gap-2">
+              <span className="flex items-center justify-center gap-3">
                 <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                Uploading to queue...
+                {uploadProgress < 100 
+                  ? `Uploading ${uploadProgress}%...` 
+                  : "Finalizing Order..."
+                }
               </span>
             ) : (
               "Place Order"
@@ -139,6 +162,82 @@ export default function Dashboard() {
       </div>
 
       <BottomNav />
+    </div>
+  );
+}
+
+function FilePreview({ file }: { file: File }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (file.type.startsWith("image/")) {
+      const objectUrl = URL.createObjectURL(file);
+      setUrl(objectUrl);
+      return () => URL.revokeObjectURL(objectUrl);
+    } else if (file.type === "application/pdf") {
+      setLoading(true);
+      const generatePdfThumb = async () => {
+        try {
+          const buffer = await file.arrayBuffer();
+          const loadingTask = pdfjsLib.getDocument({ data: buffer });
+          const pdf = await loadingTask.promise;
+          const page = await pdf.getPage(1);
+          
+          const viewport = page.getViewport({ scale: 0.5 });
+          const canvas = document.createElement("canvas");
+          const context = canvas.getContext("2d");
+          if (!context) return;
+          
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          
+          const renderContext = {
+            canvasContext: context,
+            viewport: viewport,
+          };
+          
+          await page.render(renderContext).promise;
+          
+          if (!isCancelled) {
+            setUrl(canvas.toDataURL("image/jpeg", 0.8));
+          }
+        } catch (e) {
+          console.warn("Failed to generate PDF preview", e);
+        } finally {
+          if (!isCancelled) setLoading(false);
+        }
+      };
+      generatePdfThumb();
+      
+      return () => { isCancelled = true; };
+    }
+  }, [file]);
+
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={file.name}
+        className="h-16 w-16 shrink-0 rounded-md object-cover border border-border shadow-sm"
+      />
+    );
+  }
+
+  return (
+    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary border border-primary/20 shadow-sm">
+      {loading ? (
+        <svg className="h-6 w-6 animate-spin text-primary/50" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+          <path fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" className="opacity-75" />
+        </svg>
+      ) : (
+        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        </svg>
+      )}
     </div>
   );
 }
