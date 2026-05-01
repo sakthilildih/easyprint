@@ -89,7 +89,7 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
 /** Calculate queue position for a given order. */
 export function queuePosition(order: Order, allOrders: Order[]) {
   const ahead = allOrders.filter(
-    (o) => o.status !== "Ready" && o.createdAt < order.createdAt && o.id !== order.id
+    (o) => (o.status === "Pending" || o.status === "Printing") && o.createdAt < order.createdAt && o.id !== order.id
   ).length;
   return { position: ahead + 1, ahead };
 }
