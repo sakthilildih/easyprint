@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 
 export function BottomNav() {
   return (
-    <nav className="sticky bottom-0 z-30 grid grid-cols-2 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-2 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <Tab to="/" label="New Order" icon="＋" end />
       <Tab to="/orders" label="My Orders" icon="≡" />
     </nav>

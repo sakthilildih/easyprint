@@ -136,7 +136,7 @@ export default function Dashboard() {
       </main>
 
       {/* Sticky bottom bar */}
-      <div className="fixed inset-x-0 bottom-[52px] z-20 border-t border-border bg-background/95 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-[64px] z-20 border-t border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-md items-center justify-end px-4 py-3">
           <button
             onClick={submit}
