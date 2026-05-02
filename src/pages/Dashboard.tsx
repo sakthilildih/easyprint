@@ -77,7 +77,8 @@ export default function Dashboard() {
 
           const finalFiles: OrderFile[] = [...initialFiles];
 
-          const uploadPromises = files.map(async (originalFile, index) => {
+          for (let i = 0; i < files.length; i++) {
+            const originalFile = files[i];
             let fileToUpload = originalFile;
             
             // Compress images before uploading to save massive bandwidth
@@ -94,7 +95,7 @@ export default function Dashboard() {
               }
             }
 
-            // Upload to S3 concurrently
+            // Upload to S3 STRICTLY SEQUENTIALLY to prevent network timeouts
             let finalUrl = "failed";
             try {
               finalUrl = await uploadToS3(fileToUpload, user, (percent) => {
@@ -107,7 +108,7 @@ export default function Dashboard() {
               finalUrl = `failed:${err.message || 'Unknown error'}`;
             }
 
-            finalFiles[index] = {
+            finalFiles[i] = {
               name: originalFile.name, // keep original name for UI tracking
               size: fileToUpload.size, // reflect the new optimized size
               url: finalUrl
@@ -115,9 +116,7 @@ export default function Dashboard() {
             
             // Incrementally update the order document so files that finish show checkmarks
             await updateOrderFiles(order.id, finalFiles);
-          });
-
-          await Promise.all(uploadPromises);
+          }
 
           console.log("✅ Background uploads completed and URLs updated.");
         } catch (uploadError) {
