@@ -51,8 +51,12 @@ export default function Dashboard() {
     try {
       const { uploadToS3 } = await import("@/lib/aws");
 
+      // Shortest Job First: Sort files by size so tiny images upload instantly
+      // giving immediate positive feedback to the user while large PDFs take their time.
+      const sortedFilesToUpload = [...files].sort((a, b) => a.size - b.size);
+
       // 1. Create the Firestore document first with empty URLs
-      const initialFiles: OrderFile[] = files.map(f => ({
+      const initialFiles: OrderFile[] = sortedFilesToUpload.map(f => ({
         name: f.name,
         size: f.size,
         url: ""
@@ -77,8 +81,8 @@ export default function Dashboard() {
 
           const finalFiles: OrderFile[] = [...initialFiles];
 
-          for (let i = 0; i < files.length; i++) {
-            const originalFile = files[i];
+          for (let i = 0; i < sortedFilesToUpload.length; i++) {
+            const originalFile = sortedFilesToUpload[i];
             let fileToUpload = originalFile;
             
             // Compress images before uploading to save massive bandwidth
