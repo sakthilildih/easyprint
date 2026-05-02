@@ -86,6 +86,11 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
   await updateDoc(doc(db, ORDERS_COL, id), { status });
 }
 
+/** Update the files of an order (e.g. after background uploads complete). */
+export async function updateOrderFiles(id: string, files: OrderFile[]) {
+  await updateDoc(doc(db, ORDERS_COL, id), { files });
+}
+
 /** Calculate queue position for a given order. */
 export function queuePosition(order: Order, allOrders: Order[]) {
   const ahead = allOrders.filter(

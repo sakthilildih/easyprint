@@ -71,7 +71,14 @@ export default function OrderDetails() {
               <div key={idx} className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="truncate font-medium text-foreground/80">{file.name}</span>
-                  <span className="text-[10px] text-emerald-600 font-bold">✓</span>
+                  {file.url ? (
+                    <span className="text-[10px] text-emerald-600 font-bold">✓</span>
+                  ) : (
+                    <svg className="h-3 w-3 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  )}
                 </div>
                 <span className="text-xs text-muted-foreground shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
               </div>
