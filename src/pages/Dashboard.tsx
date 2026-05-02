@@ -17,7 +17,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   const [files, setFiles] = useState<File[]>([]);
-  const [fileStates, setFileStates] = useState<Record<string, { progress: number; url?: string; error?: string }>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,39 +31,12 @@ export default function Dashboard() {
         setError("Total file size exceeds 50 MB. Please remove some files.");
         return prev;
       }
-
-      // Start uploading new files immediately
-      newFiles.forEach(async (file) => {
-        const fileKey = `${file.name}-${file.size}`;
-        setFileStates(fs => ({ ...fs, [fileKey]: { progress: 0 } }));
-        
-        let progress = 0;
-        const interval = setInterval(() => {
-          progress += Math.random() * 15;
-          if (progress > 90) progress = 90;
-          setFileStates(fs => ({ ...fs, [fileKey]: { progress: Math.round(progress) } }));
-        }, 300);
-
-        try {
-          const { uploadToS3 } = await import("@/lib/aws");
-          const url = await uploadToS3(file, user || { email: "anonymous", name: "Anonymous" } as any);
-          clearInterval(interval);
-          setFileStates(fs => ({ ...fs, [fileKey]: { progress: 100, url } }));
-        } catch (e: any) {
-          clearInterval(interval);
-          setFileStates(fs => ({ ...fs, [fileKey]: { progress: 0, error: e.message } }));
-        }
-      });
-
       return combined;
     });
   };
 
   const removeFile = (index: number) => {
-    setFiles((prev) => {
-      const newFiles = prev.filter((_, i) => i !== index);
-      return newFiles;
-    });
+    setFiles((prev) => prev.filter((_, i) => i !== index));
     setError(null);
   };
 
@@ -79,26 +51,79 @@ export default function Dashboard() {
     try {
       const { uploadToS3 } = await import("@/lib/aws");
 
-      // Get URLs from fileStates
-      const finalFiles: OrderFile[] = files.map(f => {
-        const fs = fileStates[`${f.name}-${f.size}`];
-        return {
-          name: f.name,
-          size: f.size,
-          url: fs?.url || ""
-        };
-      });
+      // 1. Create the Firestore document first with empty URLs
+      const initialFiles: OrderFile[] = files.map(f => ({
+        name: f.name,
+        size: f.size,
+        url: ""
+      }));
 
       const order = await createOrder({
         userId: user.email,
         userEmail: user.email,
         userName: user.name,
         projectUrl: window.location.origin,
-        files: finalFiles,
+        files: initialFiles,
       });
 
-      console.log("✅ Order placed successfully.");
+      console.log("✅ Order placed immediately. Beginning background uploads...");
       navigate(`/orders/${order.id}`);
+
+      // 2. Upload ALL files to S3 in the background
+      (async () => {
+        try {
+          const { updateOrderFiles } = await import("@/store/orders");
+          const imageCompression = (await import("browser-image-compression")).default;
+
+          const finalFiles: OrderFile[] = [...initialFiles];
+
+          const uploadPromises = files.map(async (originalFile, index) => {
+            let fileToUpload = originalFile;
+            
+            // Compress images before uploading to save massive bandwidth
+            if (originalFile.type.startsWith("image/")) {
+              try {
+                fileToUpload = await imageCompression(originalFile, {
+                  maxSizeMB: 2, 
+                  maxWidthOrHeight: 3500, // Preserves high-res for printing
+                  useWebWorker: true,
+                });
+                console.log(`Compressed ${originalFile.name}: ${(originalFile.size/1024/1024).toFixed(1)}MB -> ${(fileToUpload.size/1024/1024).toFixed(1)}MB`);
+              } catch (err) {
+                console.warn("Image compression failed, using original file", err);
+              }
+            }
+
+            // Upload to S3 concurrently
+            let finalUrl = "failed";
+            try {
+              finalUrl = await uploadToS3(fileToUpload, user, (percent) => {
+                window.dispatchEvent(new CustomEvent('upload-progress', {
+                  detail: { orderId: order.id, filename: originalFile.name, percent }
+                }));
+              });
+            } catch (err: any) {
+              console.error(`Upload failed for ${originalFile.name}:`, err);
+              finalUrl = `failed:${err.message || 'Unknown error'}`;
+            }
+
+            finalFiles[index] = {
+              name: originalFile.name, // keep original name for UI tracking
+              size: fileToUpload.size, // reflect the new optimized size
+              url: finalUrl
+            };
+            
+            // Incrementally update the order document so files that finish show checkmarks
+            await updateOrderFiles(order.id, finalFiles);
+          });
+
+          await Promise.all(uploadPromises);
+
+          console.log("✅ Background uploads completed and URLs updated.");
+        } catch (uploadError) {
+          console.error("Background upload failed:", uploadError);
+        }
+      })();
 
     } catch (e: any) {
       console.error("Order placement failed:", e);
@@ -132,41 +157,22 @@ export default function Dashboard() {
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-muted-foreground">Selected Files ({files.length})</h2>
             <div className="space-y-2">
-              {files.map((file, idx) => {
-                const fsState = fileStates[`${file.name}-${file.size}`];
-                return (
-                  <div key={idx} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-sm">
-                    <FilePreview file={file} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{file.name}</div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="text-xs text-muted-foreground w-12 shrink-0">{(file.size / 1024).toFixed(0)} KB</div>
-                        {fsState && (
-                          <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                            <div 
-                              className={`h-full transition-all duration-300 ${fsState.error ? 'bg-destructive' : 'bg-primary'}`}
-                              style={{ width: `${fsState.progress}%` }} 
-                            />
-                          </div>
-                        )}
-                        {fsState?.progress === 100 && (
-                          <span className="text-[10px] text-emerald-600 font-bold shrink-0">✓</span>
-                        )}
-                        {fsState?.error && (
-                          <span className="text-[10px] text-destructive font-bold shrink-0">Failed</span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => removeFile(idx)}
-                      className="ml-2 p-2 text-muted-foreground transition hover:text-destructive shrink-0"
-                      aria-label="Remove file"
-                    >
-                      ✕
-                    </button>
+              {files.map((file, idx) => (
+                <div key={idx} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-sm">
+                  <FilePreview file={file} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{file.name}</div>
+                    <div className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} KB</div>
                   </div>
-                );
-              })}
+                  <button
+                    onClick={() => removeFile(idx)}
+                    className="ml-2 p-2 text-muted-foreground transition hover:text-destructive shrink-0"
+                    aria-label="Remove file"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
             </div>
           </section>
         )}
@@ -178,7 +184,7 @@ export default function Dashboard() {
         <div className="mx-auto flex max-w-md items-center justify-end px-4 py-3">
           <button
             onClick={submit}
-            disabled={files.length === 0 || submitting || files.some(f => (fileStates[`${f.name}-${f.size}`]?.progress ?? 0) < 100)}
+            disabled={files.length === 0 || submitting}
             className="w-full rounded-xl bg-primary px-5 py-3.5 text-base font-bold text-primary-foreground shadow-md transition active:scale-[.98] disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
           >
             {submitting ? (
@@ -187,10 +193,11 @@ export default function Dashboard() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                Finalizing Order...
+                {uploadProgress < 100 
+                  ? `Uploading ${uploadProgress}%...` 
+                  : "Finalizing Order..."
+                }
               </span>
-            ) : files.some(f => (fileStates[`${f.name}-${f.size}`]?.progress ?? 0) < 100) ? (
-              "Uploading Files..."
             ) : (
               "Place Order"
             )}
